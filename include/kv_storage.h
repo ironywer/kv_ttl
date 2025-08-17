@@ -26,10 +26,6 @@ public:
         }
     }
 
-    ~KVStorage()
-    {
-    }
-
     void set(std::string key, std::string value, uint32_t ttl)
     {
         auto &entry = data_[key];
@@ -40,7 +36,7 @@ public:
         }
         else
         {
-            entry.immortal = true;
+            entry.immortal = false;
             entry.expire_at = Clock::now() + std::chrono::seconds(ttl);
         }
         entry.version++;
@@ -52,8 +48,11 @@ public:
 
     bool remove(std::string_view key)
     {
-
-        return false;
+        auto it = data_.find(std::string(key));
+        if (it == data_.end())
+            return false;
+        data_.erase(it);
+        return true;
     }
 
     std::optional<std::string> get(std::string_view key) const
@@ -69,13 +68,57 @@ public:
 
     std::vector<std::pair<std::string, std::string>> getManySorted(std::string_view key, uint32_t count) const
     {
-
-        return {};
+        std::vector<std::pair<std::string, std::string>> out;
+        if (count == 0)
+            return out;
+        auto it = data_.lower_bound(std::string(key));
+        const auto now = Clock::now();
+        while (it != data_.end() && out.size() < count)
+        {
+            const Entry &e = it->second;
+            if (e.immortal || e.expire_at > now)
+                out.emplace_back(it->first, e.value);
+            ++it;
+        }
+        return out;
     }
 
     std::optional<std::pair<std::string, std::string>> removeOneExpiredEntry()
     {
+        const auto now = Clock::now();
+        while (!heap_.empty())
+        {
+            auto top = heap_.top();
+            if (top.expire_at > now)
+                return std::nullopt;
 
+            auto it = data_.find(top.key);
+            if (it == data_.end())
+            {
+                heap_.pop();
+                continue;
+            }
+
+            Entry &e = it->second;
+
+            if (e.immortal || e.version != top.version)
+            {
+                heap_.pop();
+                continue;
+            }
+
+            if (e.expire_at <= now)
+            {
+                auto res = std::make_pair(it->first, e.value);
+                data_.erase(it);
+                heap_.pop();
+                return res;
+            }
+            else
+            {
+                heap_.pop();
+            }
+        }
         return std::nullopt;
     }
 
